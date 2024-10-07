@@ -13,7 +13,7 @@ from langchain.prompts import ChatPromptTemplate
 import fitz  # PyMuPDF
 import pandas as pd
 
-# API key
+# API key for ChatGroq (keep it secure in production)
 api_key = "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"
 
 # Function to load text from various file types
@@ -22,6 +22,7 @@ def load_text(file_stream, file_name):
         return load_pdf(file_stream)
     elif file_name.endswith('.csv'):
         return load_csv(file_stream)
+    # Add more file types as needed
     return []
 
 # Function to load PDF and extract text
@@ -57,6 +58,7 @@ def process_zip(uploaded_file):
                 docs.extend([Document(text) for text in texts])
     return docs
 
+# Document class to store text data
 class Document:
     def __init__(self, text, metadata=None):
         self.page_content = text
@@ -159,33 +161,15 @@ def display_message(message, is_user=False):
 
     st.markdown(html_content, unsafe_allow_html=True)
 
-# Streamlit app main function
-def main():
-    st.markdown(css, unsafe_allow_html=True)
-    st.title("CHAT WITH PDFS")
+# Admin Page
+def admin_view():
+    st.title("Admin Page - Upload and Process Files")
+    uploaded_zip = st.file_uploader("Upload a ZIP file", type=["zip"])
+    process_button = st.button("Process Files")
 
-    # Initialize session state variables
-    if 'generated' not in st.session_state:
-        st.session_state['generated'] = []
-
-    if 'past' not in st.session_state:
-        st.session_state['past'] = []
-
-    # Checkbox to toggle between Admin and User
-    is_admin = st.sidebar.checkbox("Admin", value=True)
-
-    if is_admin:
-        st.sidebar.title("Admin View")
-        uploaded_zip = st.sidebar.file_uploader("Upload a ZIP file", type=["zip"])
-        process_button = st.sidebar.button("Process Files")
-
-        docs = []  # Initialize docs list here to ensure it's available
-
-        if process_button:
-            if uploaded_zip:
-                with st.spinner("Loading and processing ZIP file..."):
-                    docs = process_zip(uploaded_zip)
-
+    if process_button and uploaded_zip:
+        with st.spinner("Loading and processing ZIP file..."):
+            docs = process_zip(uploaded_zip)
             if docs:
                 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
                 splits = text_splitter.split_documents(docs)
@@ -196,19 +180,16 @@ def main():
                 st.session_state.retriever = retriever
                 st.success("Files loaded and processed successfully!")
 
-    else:
-        st.sidebar.title("User View")
-        if 'retriever' not in st.session_state:
-            st.error("No documents available. Please contact the admin to upload and process documents.")
-            return
+# User Page
+def user_view():
+    st.title("User Page - Ask Questions about Uploaded Files")
 
-    # Setup the question-answering chain if ZIP is processed or user accessing
+    # Setup the question-answering chain if ZIP is processed
     if 'retriever' in st.session_state:
         system_prompt = (
             "You are an assistant for question-answering tasks based on the provided/uploaded documents. "
-            "When a query is received, first search the content of the documents to find a relevant answer. If the answer is available, "
-            "provide a detailed and informative response, ensuring it is neither too lengthy nor too concise. "
-            "If the query is not addressed in the documents, then you must provide the answer based on your knowledge."
+            "Search the content of the documents to find a relevant answer. If the answer is available, provide it; otherwise, "
+            "provide an answer based on your knowledge."
             "\n\n"
             "{context}"
         )
@@ -224,7 +205,7 @@ def main():
         question_answer_chain = create_stuff_documents_chain(llm, prompt)
         rag_chain = create_retrieval_chain(st.session_state.retriever, question_answer_chain)
 
-        # Display the conversation chain
+        # Display conversation
         if st.session_state['generated']:
             for ai_msg, user_msg in zip(st.session_state['generated'], st.session_state['past']):
                 if user_msg:
@@ -233,15 +214,8 @@ def main():
                     display_message(ai_msg)
 
         # User input setup
-        input_container = st.empty()  # This container will hold the input box
-        user_input = input_container.text_input("Ask a question about the content:", key="user_input")
-
-        # Buttons on the same line
-        col1, col2 = st.columns(2)
-        ask_button = col1.button("Ask")
-        clear_button = col2.button("Clear 🗑️")
-
-        if ask_button and user_input:
+        user_input = st.text_input("Ask a question about the content:")
+        if st.button("Ask") and user_input:
             with st.spinner("Getting the answer..."):
                 results = rag_chain.invoke({"input": user_input})
                 answer = results['answer']
@@ -250,10 +224,16 @@ def main():
                 display_message(user_input, is_user=True)
                 display_message(answer)
 
-        if clear_button:
-            input_container.text_input("Ask a question about the content:", value="", key="reset")
-            st.session_state.past = []
-            st.session_state.generated = []
+# Main function
+def main():
+    st.markdown(css, unsafe_allow_html=True)
+    st.sidebar.title("Navigation")
+    app_mode = st.sidebar.radio("Choose the mode", ["Admin", "User"])
+
+    if app_mode == "Admin":
+        admin_view()
+    else:
+        user_view()
 
 if __name__ == "__main__":
     main()
