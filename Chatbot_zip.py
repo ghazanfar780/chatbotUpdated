@@ -13,7 +13,7 @@ from langchain.prompts import ChatPromptTemplate
 import fitz  # PyMuPDF
 import pandas as pd
 
-# API key for ChatGroq (keep it secure in production)
+# API key is hardcoded
 api_key = "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"
 
 # Function to load text from various file types
@@ -22,7 +22,6 @@ def load_text(file_stream, file_name):
         return load_pdf(file_stream)
     elif file_name.endswith('.csv'):
         return load_csv(file_stream)
-    # Add more file types as needed
     return []
 
 # Function to load PDF and extract text
@@ -58,13 +57,12 @@ def process_zip(uploaded_file):
                 docs.extend([Document(text) for text in texts])
     return docs
 
-# Document class to store text data
 class Document:
     def __init__(self, text, metadata=None):
         self.page_content = text
         self.metadata = metadata if metadata is not None else {}
 
-# CSS styles
+# CSS styles for the chat UI
 css = '''
 <style>
 body {
@@ -128,7 +126,7 @@ button:hover {
 </style>
 '''
 
-# HTML templates
+# HTML templates for chat UI
 bot_template = '''
 <div class="chat-message bot">
     <div class="avatar">
@@ -147,7 +145,7 @@ user_template = '''
 </div>
 '''
 
-# Function to display message with template
+# Function to display chat message
 def display_message(message, is_user=False):
     with open("user.jpg", "rb") as img_file:
         user_image = base64.b64encode(img_file.read()).decode("utf-8")
@@ -161,51 +159,47 @@ def display_message(message, is_user=False):
 
     st.markdown(html_content, unsafe_allow_html=True)
 
-# Admin Page
-def admin_view():
-    st.title("Admin Page - Upload and Process Files")
-    uploaded_zip = st.file_uploader("Upload a ZIP file", type=["zip"])
-    process_button = st.button("Process Files")
+# Admin section to upload files
+def admin_section():
+    st.sidebar.title("Admin Area")
+    admin_password = st.sidebar.text_input("Enter Admin Password", type="password")
+    
+    if admin_password == "admin_pass":  # Replace with your own secure password
+        uploaded_zip = st.sidebar.file_uploader("Upload a ZIP file", type=["zip"])
+        process_button = st.sidebar.button("Process Files")
+        
+        if process_button and uploaded_zip:
+            with st.spinner("Loading and processing ZIP file..."):
+                docs = process_zip(uploaded_zip)
+                if docs:
+                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+                    splits = text_splitter.split_documents(docs)
+                    model_name = "all-MiniLM-L6-v2"
+                    embeddings = HuggingFaceEmbeddings(model_name=model_name)
+                    vectorstore = FAISS.from_documents(documents=splits, embedding=embeddings)
+                    retriever = vectorstore.as_retriever()
+                    st.session_state.retriever = retriever
+                    st.success("Files uploaded and processed successfully!")
+    else:
+        st.sidebar.error("Incorrect password")
 
-    if process_button and uploaded_zip:
-        with st.spinner("Loading and processing ZIP file..."):
-            docs = process_zip(uploaded_zip)
-            if docs:
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-                splits = text_splitter.split_documents(docs)
-                model_name = "all-MiniLM-L6-v2"
-                embeddings = HuggingFaceEmbeddings(model_name=model_name)
-                vectorstore = FAISS.from_documents(documents=splits, embedding=embeddings)
-                retriever = vectorstore.as_retriever()
-                st.session_state.retriever = retriever
-                st.success("Files loaded and processed successfully!")
-
-# User Page
-def user_view():
-    st.title("User Page - Ask Questions about Uploaded Files")
-
-    # Setup the question-answering chain if ZIP is processed
+# User section to ask questions
+def user_section():
+    st.title("Search Documents")
     if 'retriever' in st.session_state:
         system_prompt = (
             "You are an assistant for question-answering tasks based on the provided/uploaded documents. "
-            "Search the content of the documents to find a relevant answer. If the answer is available, provide it; otherwise, "
-            "provide an answer based on your knowledge."
-            "\n\n"
-            "{context}"
+            "When a query is received, search the content of the documents to find a relevant answer. "
+            "If the query is not addressed, provide a response based on your knowledge."
         )
-
         prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", system_prompt),
-                ("human", "{input}"),
-            ]
+            [("system", system_prompt), ("human", "{input}")]
         )
 
         llm = ChatGroq(model="llama3-70b-8192", groq_api_key=api_key)
         question_answer_chain = create_stuff_documents_chain(llm, prompt)
         rag_chain = create_retrieval_chain(st.session_state.retriever, question_answer_chain)
 
-        # Display conversation
         if st.session_state['generated']:
             for ai_msg, user_msg in zip(st.session_state['generated'], st.session_state['past']):
                 if user_msg:
@@ -213,8 +207,7 @@ def user_view():
                 if ai_msg:
                     display_message(ai_msg)
 
-        # User input setup
-        user_input = st.text_input("Ask a question about the content:")
+        user_input = st.text_input("Ask a question about the content:", key="user_input")
         if st.button("Ask") and user_input:
             with st.spinner("Getting the answer..."):
                 results = rag_chain.invoke({"input": user_input})
@@ -224,16 +217,23 @@ def user_view():
                 display_message(user_input, is_user=True)
                 display_message(answer)
 
-# Main function
+# Main function to run the Streamlit app
 def main():
     st.markdown(css, unsafe_allow_html=True)
-    st.sidebar.title("Navigation")
-    app_mode = st.sidebar.radio("Choose the mode", ["Admin", "User"])
+    
+    if 'generated' not in st.session_state:
+        st.session_state['generated'] = []
 
-    if app_mode == "Admin":
-        admin_view()
+    if 'past' not in st.session_state:
+        st.session_state['past'] = []
+    
+    st.sidebar.title("User Mode")
+    mode = st.sidebar.radio("Select Mode", ["Admin", "User"])
+
+    if mode == "Admin":
+        admin_section()
     else:
-        user_view()
+        user_section()
 
 if __name__ == "__main__":
     main()
